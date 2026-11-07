@@ -140,7 +140,7 @@ that was never a book.
 |---|---|
 | Original card | full ddrescue image (31,268,536,320 B) and 6 extra reads of the first 96 MiB; never written |
 | New card | 64 GB, FAT32. Before the firmware upgrade, the 44 EPUB entries and 11 original wallpapers matched the verified migration tree byte for byte, and all 415 files of the reader's state folder (settings, 6 reading-progress files) were unchanged by the final write session |
-| Sleep screens | 822 in total: 11 originals + 811 new 2-bpp images (licence recorded per image) |
+| Sleep screens | 822 in total: 11 originals + 811 new (licence recorded per image). 561 of the new ones are 2-bpp (drawn directly by 2.0.0); the 11 originals and the 250 added in an earlier session are 24-bit and were left byte-identical, so 2.0.0 converts each once and caches it |
 | Firmware | CrossPoint 1.5.0 → **2.0.0** through the on-device SD-card update; 1.5.0 image kept on the card for rollback |
 | Final write session | before/after snapshots verified by a second read; `fsck -n` clean; verifier: only planned additions |
 | Checked on the device | 2.0.0 boots; reading position kept; NotoSerif works; sleep/wake wallpapers work; all books and wallpapers present |
