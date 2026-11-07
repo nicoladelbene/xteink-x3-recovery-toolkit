@@ -59,7 +59,7 @@ def majority_vote(reads: Sequence[bytes]) -> tuple[bytes, VoteStats]:
     """Bitwise majority across equal-length reads; ties keep the primary (first) read.
 
     Provided for comparison: on the card this toolkit was written for it made the
-    result *worse* than the best single read (see docs/recovery-methodology.md).
+    result *worse* than the best single read (see docs/recovery-method.md).
     """
     if len(reads) < 2:
         raise ValueError("need at least two reads")
@@ -135,14 +135,15 @@ class RepairResult:
 
 
 def _dfs_deflate(versions, allowed: dict[int, list[int]], ds: int, de: int,
-                 crc: int, budget: int) -> tuple[dict[int, int] | None, int]:
+                 crc: int, budget: int, size: int | None = None) -> tuple[dict[int, int] | None, int]:
     """Depth-first search over sector versions with incremental inflate pruning.
 
     Iterative (explicit stack), because one member can span thousands of sectors.
     Each frame keeps a copy of the inflater state *before* its sector, so
     backtracking costs nothing but discarding frames. A branch is cut as soon
-    as the deflate stream becomes invalid or ends early; a full path is accepted
-    only if the stream ends exactly at the member's end and the CRC-32 matches.
+    as the deflate stream becomes invalid, ends early, or produces more than ``size``
+    bytes; a full path is accepted only if the stream ends exactly at the member's end
+    with exactly ``size`` bytes of output and the CRC-32 matches.
     Returns (sector -> version index, nodes examined); None if not found or the
     budget ran out (nodes > budget).
     """
@@ -153,11 +154,11 @@ def _dfs_deflate(versions, allowed: dict[int, list[int]], ds: int, de: int,
 
     nodes = 0
     choice: dict[int, int] = {}
-    # frame: [sector index, inflater before this sector, crc before, options, next option]
-    stack = [[first, zlib.decompressobj(-15), 0, options(first), 0]]
+    # frame: [sector index, inflater before this sector, crc before, options, next option, bytes out]
+    stack = [[first, zlib.decompressobj(-15), 0, options(first), 0, 0]]
     while stack:
         fr = stack[-1]
-        i, dec, ccrc, opts, k = fr
+        i, dec, ccrc, opts, k, nout = fr
         if k >= len(opts):
             stack.pop()
             choice.pop(i, None)
@@ -176,17 +177,24 @@ def _dfs_deflate(versions, allowed: dict[int, list[int]], ds: int, de: int,
             continue
         if d2.eof and i < last:
             continue  # stream claims to end before its declared size: wrong branch
+        if d2.eof and d2.unused_data:
+            continue  # stream ends before the member's compressed end
+        nout2 = nout + len(out)
+        if size is not None and nout2 > size:
+            continue  # more output than the declared uncompressed size
         c2 = zlib.crc32(out, ccrc)
         choice[i] = vi
         if i == last:
             try:
-                c2 = zlib.crc32(d2.flush(), c2)
+                tail = d2.flush()
             except zlib.error:
                 continue
-            if d2.eof and (c2 & 0xFFFFFFFF) == crc:
+            c2 = zlib.crc32(tail, c2)
+            nout2 += len(tail)
+            if d2.eof and (size is None or nout2 == size) and (c2 & 0xFFFFFFFF) == crc:
                 return dict(choice), nodes
             continue
-        stack.append([i + 1, d2, c2, options(i + 1), 0])
+        stack.append([i + 1, d2, c2, options(i + 1), 0, nout2])
     return None, nodes
 
 
@@ -198,8 +206,8 @@ def _exhaustive(buf: bytearray, versions, allowed: dict[int, list[int]], m: Memb
         space *= len(allowed[i])
     if space > max_combos:
         return None, space
+    trial = bytearray(buf)  # one working copy; every combination rewrites all span sectors
     for n, combo in enumerate(itertools.product(*[allowed[i] for i in span]), 1):
-        trial = bytearray(buf)
         for i, vi in zip(span, combo):
             trial[i * SECTOR:i * SECTOR + len(versions[i][vi])] = versions[i][vi]
         if member_ok(trial, m):
@@ -284,7 +292,7 @@ def repair_zip(versions: Sequence[Sequence[bytes]], budget: int = 400_000,
                                           "every usable read returned the same (wrong) data"))
             continue
         if m.method == 8:
-            ch, n = _dfs_deflate(versions, allowed, ds, de, m.crc32, budget)
+            ch, n = _dfs_deflate(versions, allowed, ds, de, m.crc32, budget, m.uncompressed_size)
             exhausted = ch is None and n > budget
         else:
             ch, n = _exhaustive(buf, versions, allowed, m, max_combos)

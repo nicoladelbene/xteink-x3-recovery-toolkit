@@ -45,3 +45,35 @@ def test_firmware_and_bmp_commands(tmp_path, capsys):
     bmp.write_bytes(encode_bmp(bytes(X3_WIDTH * X3_HEIGHT), X3_WIDTH, X3_HEIGHT, 2))
     assert main(["bmp-validate", str(bmp)]) == 0
     assert "direct-on-2.0.0" in capsys.readouterr().out
+
+
+# --- regressions for defects found in the 2026-11 audit -------------------------------------
+def test_no_device_output_even_with_force_and_no_symlinked_device(tmp_path):
+    import os
+    r = tmp_path / "r.bin"
+    r.write_bytes(b"x" * 4096)
+    link = tmp_path / "card"
+    os.symlink("/dev/null", link)                       # stands in for /dev/rdiskN
+    for argv in (["reads-vote", "/dev/null", str(r), str(r), "--force"],
+                 ["reads-vote", str(link), str(r), str(r), "--force"],
+                 ["reads-diff", str(link), str(r)],
+                 ["epub-check", str(link)],
+                 ["fat-ls", str(link)]):
+        with pytest.raises(SystemExit) as e:
+            main(argv)
+        assert "never devices" in str(e.value)
+
+
+def test_extract_never_overwrites_on_name_collision(tmp_path):
+    b = Fat32Builder()
+    b.add_file("/x1.txt", b"first")
+    b.add_file("/x2.txt", b"second")
+    img = bytearray(b.build())
+    i = img.find("x2".encode("utf-16-le"))               # long-name fragment of the second file
+    assert i > 0
+    img[i:i + 4] = "x1".encode("utf-16-le")               # damaged dir: two entries, same name
+    p = tmp_path / "v.img"
+    p.write_bytes(bytes(img))
+    out = tmp_path / "out"
+    assert main(["fat-extract", str(p), str(out)]) == 1
+    assert (out / "x1.txt").read_bytes() == b"first"

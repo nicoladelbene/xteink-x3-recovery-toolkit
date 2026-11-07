@@ -1,8 +1,10 @@
 """Command-line interface: ``python -m x3toolkit <command> ...``.
 
 Every command here works on *image files* and is read-only with respect to its
-inputs. Nothing in this CLI opens a block device for writing; writing to a card
-is done only by the guarded shell scripts in ``scripts/macos``.
+inputs. No path given to this CLI, as input or output, may be a device: paths are
+resolved (symlinks included) and block/character devices and anything under /dev
+are refused. Writing to a card is done only by the guarded shell scripts in
+``scripts/macos``.
 """
 from __future__ import annotations
 
@@ -12,6 +14,7 @@ import hashlib
 import json
 import mmap
 import os
+import stat
 import sys
 
 from . import __version__
@@ -25,12 +28,25 @@ from .verify import Plan, compare, walk_both_fats
 CHIP_BY_NAME = {v.lower().replace("-", ""): k for k, v in CHIP_IDS.items()}
 
 
+def _is_device(path: str) -> bool:
+    real = os.path.realpath(path)
+    if real == "/dev" or real.startswith("/dev/"):
+        return True
+    try:
+        mode = os.stat(real).st_mode
+    except OSError:
+        return False  # does not exist (yet): an output file about to be created
+    return stat.S_ISBLK(mode) or stat.S_ISCHR(mode)
+
+
 def _refuse_device(path: str) -> None:
-    if path.startswith("/dev/"):
-        sys.exit(f"refusing to open {path}: this tool works on image files only")
+    """Exit if ``path`` is, or resolves through symlinks to, a block/character device."""
+    if _is_device(path):
+        sys.exit(f"refusing to use {path}: this tool works on image files only, never devices")
 
 
 def _out_path(path: str, force: bool) -> None:
+    _refuse_device(path)  # even with --force, never write to a device
     if os.path.exists(path) and not force:
         sys.exit(f"refusing to overwrite {path} (use --force)")
 
@@ -64,11 +80,12 @@ def cmd_fat_ls(a) -> int:
 
 def cmd_fat_extract(a) -> int:
     _refuse_device(a.image)
+    _refuse_device(a.outdir)
     if os.path.exists(a.outdir) and os.listdir(a.outdir):
         sys.exit(f"{a.outdir} is not empty")
     vol = Fat32Volume.open(a.image, a.lba, a.fat)
     real_out = os.path.realpath(a.outdir)
-    n = 0
+    n = collisions = 0
     for e in vol.walk(hash_files=False):
         dest = os.path.realpath(os.path.join(a.outdir, e.path.lstrip("/")))
         if not dest.startswith(real_out + os.sep):
@@ -78,18 +95,25 @@ def cmd_fat_extract(a) -> int:
             os.makedirs(dest, exist_ok=True)
             continue
         os.makedirs(os.path.dirname(dest), exist_ok=True)
-        with open(dest, "wb") as f:
+        try:  # exclusive create: duplicate or case-only-different names must not overwrite
+            f = open(dest, "xb")
+        except FileExistsError:
+            collisions += 1
+            print(f"NOT extracted (name collision, e.g. case-insensitive target): {e.path!r}", file=sys.stderr)
+            continue
+        with f:
             f.write(vol.read_file(e))
         if e.mtime:
             os.utime(dest, (e.mtime.timestamp(), e.mtime.timestamp()))
         n += 1
-    print(f"extracted {n} files, {len(vol.anomalies)} anomalies")
-    return 1 if vol.anomalies else 0
+    print(f"extracted {n} files, {len(vol.anomalies)} anomalies, {collisions} name collisions")
+    return 1 if vol.anomalies or collisions else 0
 
 
 def cmd_epub_check(a) -> int:
     fails = 0
     for p in a.files:
+        _refuse_device(p)
         r = check_epub(open(p, "rb").read())
         fails += not r.ok
         print(f"{'PASS' if r.ok else 'FAIL'}  {p}  {r.detail}")
@@ -140,6 +164,9 @@ def cmd_epub_reconstruct(a) -> int:
     if a.path not in ents:
         sys.exit(f"{a.path} not found in the image")
     e = ents[a.path]
+    if not e.chain_ok:
+        print(f"WARNING: the cluster chain of {a.path} is shorter or longer than its size; "
+              "the file cannot be reassembled correctly", file=sys.stderr)
     vers = sector_versions(reads, vol.sector_offsets(e), e.size)
     multi = sum(len(v) > 1 for v in vers)
     res = repair_zip(vers, budget=a.budget, max_combos=a.max_combos)
@@ -157,6 +184,7 @@ def cmd_epub_reconstruct(a) -> int:
 def cmd_bmp_validate(a) -> int:
     bad = 0
     for p in a.files:
+        _refuse_device(p)
         v = validate_sleep_bmp(open(p, "rb").read())
         bad += not v.ok
         tag = "OK " if v.ok else "BAD"
@@ -170,8 +198,10 @@ def cmd_bmp_validate(a) -> int:
 
 def cmd_bmp_convert(a) -> int:
     from .wallpaper import encode_x3, make_master, preview, quantize
+    _refuse_device(a.out)
     os.makedirs(a.out, exist_ok=True)
     for p in a.sources:
+        _refuse_device(p)
         stem = os.path.splitext(os.path.basename(p))[0]
         dest = os.path.join(a.out, f"{stem}.bmp")
         _out_path(dest, a.force)
@@ -180,13 +210,16 @@ def cmd_bmp_convert(a) -> int:
         with open(dest, "wb") as f:
             f.write(data)
         if a.preview:
-            preview(quantize(master)).save(os.path.join(a.out, f"{stem}.preview.png"))
+            pv = os.path.join(a.out, f"{stem}.preview.png")
+            _out_path(pv, a.force)
+            preview(quantize(master)).save(pv)
         v = validate_sleep_bmp(data)
         print(f"{'OK ' if v.ok else 'BAD'} {dest} ({len(data)} bytes)")
     return 0
 
 
 def cmd_firmware_check(a) -> int:
+    _refuse_device(a.file)
     chip = CHIP_BY_NAME.get(a.chip.lower().replace("-", "")) if a.chip else None
     if a.chip and chip is None:
         sys.exit(f"unknown chip {a.chip}; known: {', '.join(CHIP_IDS.values())}")
@@ -203,7 +236,7 @@ def cmd_firmware_check(a) -> int:
 
 
 def cmd_verify(a) -> int:
-    for p in (a.before, a.after):
+    for p in (a.before, a.after, a.manifest):
         _refuse_device(p)
     plan = Plan.from_manifest(open(a.manifest).read(), removable=tuple(a.remove),
                               ordered_dirs=tuple(a.ordered))
@@ -221,6 +254,7 @@ def cmd_verify(a) -> int:
 
 def cmd_fat_used(a) -> int:
     """Print the MiB to snapshot: FAT metadata + every allocated cluster, + 1 MiB margin."""
+    _refuse_device(a.image)
     with open(a.image, "rb") as f:
         try:
             vol = Fat32Volume(f, a.lba)
@@ -234,6 +268,7 @@ def cmd_fat_used(a) -> int:
 def cmd_precheck(a) -> int:
     """Pre-write gate on a snapshot: both FATs agree, no anomalies, no planned path exists yet."""
     _refuse_device(a.snapshot)
+    _refuse_device(a.manifest)
     plan = Plan.from_manifest(open(a.manifest).read())
     with open(a.snapshot, "rb") as f:
         ents, problems = walk_both_fats(f, a.lba)

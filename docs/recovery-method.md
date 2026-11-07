@@ -39,12 +39,21 @@ ddrescue log only shows the card *answered*. It does not show the answers were c
 ## 3. A per-file oracle: ZIP CRC-32
 
 EPUB is a ZIP container. Each member stores a CRC-32 of its uncompressed data, so the file
-itself tells you whether a candidate reconstruction is right. `epub-check` checks:
+itself can tell you whether a candidate reconstruction is very likely right. `epub-check`
+checks:
 
-1. that the central directory parses;
-2. that the local header of every member agrees with the central directory;
-3. that every member inflates without error to the declared size and CRC;
-4. that `META-INF/container.xml` is present.
+1. that the central directory parses (bounds-checked: a truncated or malformed archive
+   gets a FAIL verdict, never a crash);
+2. that every member's local header is present and its data lies inside the file;
+3. that every deflated member decodes as a valid stream ending exactly at its compressed end,
+   to **exactly its declared uncompressed size**, with a matching **CRC-32**. Stored members are
+   checked for size and CRC-32;
+4. that `META-INF/container.xml` is present;
+5. a second opinion from Python's `zipfile.testzip`, which also checks that local and central
+   file names match.
+
+See [section 7](#7-what-repaired-means-and-what-it-does-not) for what a pass does and
+does not establish.
 
 ## 4. Why a majority vote fails
 
@@ -120,7 +129,57 @@ Per-book data is in [`data/multiread-reconstruction.csv`](data/multiread-reconst
 book, and at least one read has the correct data for each sector. More reads help only if they
 return *new* versions. Run the extra reads early, before the card degrades further.
 
-## 7. Recommended procedure
+## 7. What "repaired" means, and what it does not
+
+There are four levels of evidence. They are easy to conflate:
+
+| Level | What it establishes | Holds for |
+|---|---|---|
+| **Decodes** | every member inflates without error, ending exactly at its compressed end, to exactly its declared size | all 26 intact books and all 6 rebuilds |
+| **CRC-32 matches** | each member's content matches the checksum stored when the archive was written | the same 32 books |
+| **Byte-identical to an independent copy** | the whole file, headers and directory included, equals a copy obtained elsewhere | **1** of the 6 rebuilds (book-06). The 6 clean copies are independent by definition, but were not compared with a third source |
+| **Semantically correct** | the book opens, renders and reads correctly | **not tested** book by book; one book was opened on the device after the upgrade, and its reading position was intact |
+
+**Why CRC-32 is strong evidence, but not proof.** CRC-32 is a 32-bit error-detecting code,
+not a cryptographic hash.
+
+- **Random errors:** a wrong candidate matches a given CRC-32 with probability about 2⁻³²,
+  under the usual model that the code behaves like a random function for errors this large.
+  The search tests at most one CRC per node examined. The 6 rebuilds together examined
+  **18,175** nodes, so the chance that *any* of them was accepted by coincidence is at most
+  about 18,175 / 2³² ≈ **4 × 10⁻⁶**. The real chance is lower still: a wrong candidate must
+  also decode as a valid deflate stream with exactly the right length, and that rejects
+  almost every wrong combination long before the CRC is tested.
+- **Deliberate tampering:** CRC-32 is linear and easy to forge, so it offers no protection.
+  That is irrelevant to random flash errors, but it means none of this is an authenticity
+  check.
+
+**What no checksum covers.** In a ZIP archive, the CRC protects only each member's content.
+These bytes are taken from the first read and are not verified by any checksum:
+- the central directory;
+- the archive comment;
+- local-header fields other than the lengths (timestamps, flags, the duplicate CRC field).
+
+A flipped timestamp in a rebuilt book would go unnoticed. A flip that breaks parsing would
+not, because the file would then fail `epub-check`. Only book-06 was verified at this level,
+by the independent copy.
+
+**Search completeness.**
+- **Within its budget, the search is exhaustive over the versions actually read.** Branches
+  are pruned only when the deflate stream becomes invalid, or when it produces more output than
+  the declared size. A correct prefix never fails either test, so pruning never discards the
+  true answer.
+- **"Not rebuilt" therefore means one of two things:** the budget ran out (an inconclusive
+  result, not a proof that no answer exists), or the correct version of some sector was never
+  read (a definite negative for that set of reads).
+- **Stored members are searched exhaustively** up to `--max-combos` combinations.
+
+**Memory and performance.**
+- Reads are memory-mapped, not loaded. Each book is assembled in memory, a few MB for an EPUB.
+- The depth-first search keeps one inflater state per sector on its stack.
+- Every damaged book on the real card took under 2 s with the default budget of 400,000 nodes.
+
+## 8. Recommended procedure
 
 1. Stop using the card. Block automatic mounting: macOS writes `.fseventsd` and Spotlight
    files as soon as it mounts a card (`scripts/macos/mount-blocker.swift`).

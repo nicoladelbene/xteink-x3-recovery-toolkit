@@ -192,3 +192,50 @@ def test_make_manifest_lists_only_stage_files(tmp_path):
     r = subprocess.run([BASH, os.path.join(ROOT, "examples", "make-manifest.sh"), str(s), "/"],
                        capture_output=True, text=True)
     assert r.returncode != 0 and lines == (s / "stage-manifest.csv").read_text().splitlines()
+
+
+# --- regressions for defects found in the 2026-11 audit -------------------------------------
+@pytest.mark.parametrize("damage", ["missing", "changed"])
+def test_bad_stage_is_refused_before_any_write(tmp_path, damage):
+    b = Fat32Builder(clusters=8192)
+    b.add_file("/book.epub", b"PK" * 5000)
+    img = tmp_path / "card.img"
+    img.write_bytes(b.build(partition_lba=8))
+    original = img.read_bytes()
+    s = stage(tmp_path)
+    if damage == "missing":                               # previously: w0 written, then failure on w1
+        (s / "files" / "w1.bmp").unlink()
+    else:
+        (s / "files" / "w1.bmp").write_bytes(b"tampered")
+    env = dict(os.environ, X3_PYTHON=sys.executable)
+    r = run([ADD, "--image", str(img), "--partition-offset", "4096", "--stage", str(s),
+             "--backup", str(tmp_path / "bk"), "--execute"], env)
+    assert r.returncode == 2 and "stage check FAILED" in r.stdout
+    assert img.read_bytes() == original and not (tmp_path / "bk").exists()
+
+
+def test_volume_name_is_matched_literally(tmp_path):
+    env, calls = stub_env(tmp_path)
+    args = ["--disk", "disk9", "--expect-size", "63998787584", "--volume-name", "NO.NAME",
+            "--partition-offset", "4194304", "--stage", str(stage(tmp_path))]
+    r = run([ADD, *args], env)                            # a regex would accept "NO NAME" here
+    assert r.returncode == 3 and "volume name" in r.stdout
+
+
+@pytest.mark.skipif(shutil.which("mcopy") is None, reason="mtools not installed")
+def test_failure_during_writes_names_the_rollback_snapshot(tmp_path):
+    b = Fat32Builder(clusters=8192)
+    b.add_file("/book.epub", b"PK" * 5000)
+    img = tmp_path / "card.img"
+    img.write_bytes(b.build(partition_lba=8))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "mcopy"                              # the write step fails half-way
+    fake.write_text("#!/bin/sh\necho 'mcopy: simulated I/O error' >&2\nexit 1\n")
+    fake.chmod(0o755)
+    env = dict(os.environ, X3_PYTHON=sys.executable, PATH=f"{bin_dir}:{os.environ['PATH']}")
+    r = run([ADD, "--image", str(img), "--partition-offset", "4096", "--stage", str(stage(tmp_path)),
+             "--backup", str(tmp_path / "bk"), "--execute"], env)
+    assert r.returncode != 0
+    assert "FAILED during/after writes" in r.stdout and "before.bin" in r.stdout
+    assert r.stdout.count("FAILED") == 1                  # one banner, not one per subshell

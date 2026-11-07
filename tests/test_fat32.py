@@ -102,3 +102,48 @@ def test_used_region_covers_all_files():
             assert vol.cluster_offset(c) + vol.cluster_size <= end + vol.cluster_size
     off, cs = data_offset(img)
     assert end >= off
+
+
+# --- regressions for defects found in the 2026-11 audit -------------------------------------
+def _patch_dir_entry(img, vol, parent_cluster, target_first, new_first):
+    off = vol.cluster_offset(parent_cluster)
+    for i in range(off, off + vol.cluster_size, 32):
+        if img[i + 11] & 0x10 and img[i] not in (0x00, 0x2E, 0xE5) and \
+                struct.unpack_from("<H", img, i + 26)[0] == target_first:
+            struct.pack_into("<H", img, i + 26, new_first & 0xFFFF)
+            struct.pack_into("<H", img, i + 20, new_first >> 16)
+            return
+    raise AssertionError("entry not found")
+
+
+def test_directory_cycle_is_reported_not_infinite():
+    b = Fat32Builder(clusters=300)
+    b.add_file("/d/e/x.txt", b"hello")
+    img = bytearray(b.build())
+    vol = Fat32Volume(io.BytesIO(bytes(img)))
+    ents = {e.path: e for e in vol.walk()}
+    # a bit flip makes /d/e point back at /d (previously: RecursionError)
+    _patch_dir_entry(img, vol, ents["/d"].first_cluster, ents["/d/e"].first_cluster, ents["/d"].first_cluster)
+    vol = Fat32Volume(io.BytesIO(bytes(img)))
+    paths = [e.path for e in vol.walk()]
+    assert paths == ["/d", "/d/e"]
+    assert any("cycle" in a for a in vol.anomalies)
+
+
+def test_corrupt_total_sector_count_is_bounded_by_fat_size():
+    img = bytearray(Fat32Builder(clusters=300).build())
+    struct.pack_into("<I", img, 32, 0xFFFFFFF0)       # flipped high bits in BPB_TotSec32
+    vol = Fat32Volume(io.BytesIO(bytes(img)))
+    vol.walk()
+    assert vol.num_clusters <= vol.fat_sectors * 512 // 4 - 2
+    assert any("boot sector claims" in a for a in vol.anomalies)
+
+
+def test_used_region_counts_clusters_allocated_in_either_fat():
+    img = bytearray(build(lba=0))
+    vol = Fat32Volume(io.BytesIO(bytes(img)))
+    hi = vol.num_clusters                              # a free cluster near the end of the volume
+    fat2 = (vol.reserved + vol.fat_sectors) * 512
+    struct.pack_into("<I", img, fat2 + hi * 4, 0x0FFFFFFF)  # allocated in FAT2 only
+    vol = Fat32Volume(io.BytesIO(bytes(img)))
+    assert used_region_end(vol) >= vol.cluster_offset(hi) + vol.cluster_size

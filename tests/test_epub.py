@@ -34,3 +34,30 @@ def test_missing_container_and_garbage():
         z.writestr("mimetype", "application/epub+zip")
     assert "container.xml" in check_epub(buf.getvalue()).detail
     assert not check_epub(b"not a zip at all").ok
+
+
+# --- regressions for defects found in the 2026-11 audit -------------------------------------
+def test_declared_size_must_match_not_only_crc(epub_bytes):
+    import struct
+    buf = bytearray(epub_bytes)
+    p = buf.find(b"PK\x01\x02")                         # first central-directory entry
+    usz = struct.unpack_from("<I", buf, p + 24)[0]
+    struct.pack_into("<I", buf, p + 24, usz + 7)        # wrong uncompressed size, CRC untouched
+    assert not check_epub(bytes(buf)).ok
+
+
+def test_truncated_or_mutated_archives_never_raise(epub_bytes):
+    """Property: any truncation or byte mutation yields a verdict, never an exception."""
+    import random
+    rnd = random.Random(2026)
+    e = epub_bytes.rfind(b"PK\x05\x06")
+    cd = int.from_bytes(epub_bytes[e + 16:e + 20], "little")
+    samples = [epub_bytes[:cd + k] + epub_bytes[e:] for k in range(0, e - cd, 7)]  # cut inside the CD
+    samples += [epub_bytes[:n] for n in range(0, len(epub_bytes), 97)]
+    for _ in range(300):
+        b = bytearray(epub_bytes)
+        for _ in range(rnd.randint(1, 6)):
+            b[rnd.randrange(len(b))] = rnd.randrange(256)
+        samples.append(bytes(b))
+    for s in samples:
+        assert isinstance(check_epub(s).ok, bool)

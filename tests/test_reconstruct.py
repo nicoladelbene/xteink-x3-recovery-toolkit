@@ -133,3 +133,16 @@ def test_damaged_header_in_shared_sector_is_fixed_with_its_neighbour(epub_bytes)
     reads = [bytes(primary), bytes(primary), img]
     res = repair_zip(sector_versions(reads, offs, size))
     assert res.status == "repaired" and res.data == epub_bytes
+
+
+# --- regressions for defects found in the 2026-11 audit -------------------------------------
+def test_member_running_past_end_of_file_is_reported_not_raised(epub_bytes):
+    import struct
+    buf = bytearray(epub_bytes)
+    p = buf.find(b"PK\x01\x02")
+    struct.pack_into("<I", buf, p + 20, 10 ** 7)        # compressed size far beyond the file
+    versions = [[bytes(buf[i:i + 512])] for i in range(0, len(buf), 512)]
+    versions[0].append(bytes(512))                      # give the search something to try
+    res = repair_zip(versions)                          # previously: IndexError
+    assert res.status in ("partial", "unrepaired") and res.data is None
+    assert any(m.status == "header-damaged" for m in res.members)

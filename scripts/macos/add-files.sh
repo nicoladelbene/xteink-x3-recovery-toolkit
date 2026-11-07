@@ -13,6 +13,9 @@
 # The stage directory holds the files plus stage-manifest.csv (columns source,dest,size,sha256;
 # source relative to the stage dir, dest an absolute path on the card).
 #
+# Before anything else (dry run included): every staged source must exist and match its
+# manifest size and SHA-256, so a session can never stop half-way because of a bad stage.
+#
 # What --execute does, in order (any failure stops it; the card is ejected ONLY on PASS):
 #   1. identity: whole disk, external, removable, exact byte size, FAT32 partition at the given
 #      offset with the given volume name, not mounted (device mode)
@@ -24,7 +27,7 @@
 # It never partitions, formats, relabels, or writes raw sectors.
 set -Eeuo pipefail
 
-usage() { sed -n '2,25p' "$0"; exit 2; }
+usage() { sed -n '2,28p' "$0"; exit 2; }
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 DISK="" IMAGE="" EXPECT="" VOLNAME="" POFF="" STAGE="" BACKUP="" EXECUTE=0 CONFIRM="" RMMETA=0
 PY="${X3_PYTHON:-python3}"
@@ -55,6 +58,20 @@ LBA=$((POFF / 512))
 awk -F, 'NR > 1 && NF != 4 { exit 1 }' "$STAGE/stage-manifest.csv" \
   || { echo "stage-manifest.csv: every row needs exactly 4 fields (no commas or quotes in names)"; exit 2; }
 sha256() { if command -v shasum >/dev/null; then shasum -a 256 | cut -d' ' -f1; else sha256sum | cut -d' ' -f1; fi; }
+
+# Stage check: all sources present and exactly as the manifest says (before any card access).
+BADSTAGE=0
+while IFS=, read -r src dest size sha; do
+  case "/$src/" in */../*) echo "stage: source path must stay inside the stage: $src"; BADSTAGE=1; continue;; esac
+  case "$dest" in /*) ;; *) echo "stage: dest must be an absolute card path: $dest"; BADSTAGE=1; continue;; esac
+  case "$dest/" in */../*|*/./*|*//*) echo "stage: dest must be a normalised path: $dest"; BADSTAGE=1; continue;; esac
+  f="$STAGE/$src"
+  if [[ ! -f "$f" || -L "$f" ]]; then echo "stage: missing or not a regular file: $src"; BADSTAGE=1; continue; fi
+  [[ "$(wc -c < "$f" | tr -d ' ')" == "$size" ]] || { echo "stage: size differs from manifest: $src"; BADSTAGE=1; continue; }
+  [[ "$(sha256 < "$f")" == "$sha" ]] || { echo "stage: SHA-256 differs from manifest: $src"; BADSTAGE=1; }
+done < <(tail -n +2 "$STAGE/stage-manifest.csv" | tr -d '\r')
+((BADSTAGE == 0)) || { echo "stage check FAILED: fix the stage; nothing was read from or written to the target"; exit 2; }
+echo "== stage check: every source matches its manifest size and SHA-256"
 export PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}"
 "$PY" -c 'import x3toolkit' 2>/dev/null || { echo "cannot import x3toolkit with $PY (use --python)"; exit 2; }
 
@@ -81,7 +98,7 @@ check_identity() {
   [[ "$SIZE" == "$EXPECT" ]] || die "size ${SIZE:-?} != expected $EXPECT"
   grep -qE 'File System Personality: +MS-DOS FAT32' <<<"$P1" || die "${DISK}s1 is not FAT32"
   grep -qE "Partition Offset: +$POFF Bytes" <<<"$P1" || die "${DISK}s1 is not at offset $POFF"
-  grep -qF "Volume Name:" <<<"$P1" && grep -qE "Volume Name: +${VOLNAME}\$" <<<"$P1" || die "volume name is not '$VOLNAME'"
+  [[ "$(sed -nE 's/^ *Volume Name: +//p' <<<"$P1")" == "$VOLNAME" ]] || die "volume name is not '$VOLNAME'"
   if mount | grep -qE "^/dev/${DISK}(s[0-9]+)? "; then die "$DISK is mounted (run: diskutil unmountDisk $DISK)"; fi
   echo "identity OK: /dev/$DISK external removable $SIZE B, FAT32 '$VOLNAME' at offset $POFF, not mounted"
 }
@@ -106,7 +123,20 @@ OUT="$BACKUP/session-$(date -u +%Y%m%dT%H%M%SZ)"
 [[ -e "$OUT" ]] && die "$OUT exists"
 mkdir -p "$OUT"
 exec > >(tee -a "$OUT/session.log") 2>&1
-trap 'echo "== FAILED at line $LINENO: NOT verified, NOT ejected. Rollback snapshot (if taken): $OUT/before.bin"' ERR
+STATE="pre-write" FAILED_LINE="unknown"
+trap 'FAILED_LINE=$LINENO' ERR
+on_exit() {
+  local rc=$?
+  [[ $STATE == "finished" || $rc -eq 0 ]] && return
+  if [[ $STATE == pre-write ]]; then
+    echo "== FAILED before any write (exit $rc, line $FAILED_LINE): the target was not modified."
+  else
+    echo "== FAILED during/after writes (exit $rc, line $FAILED_LINE): NOT verified, NOT ejected."
+    echo "   The target may hold some of the planned files. Rollback snapshot: $OUT/before.bin"
+    echo "   See docs/safety-and-rollback.md before doing anything else."
+  fi
+}
+trap on_exit EXIT
 
 snap() {  # $1 output file
   local m h1 h2
@@ -130,6 +160,7 @@ echo "== pre-write gate"; "$PY" -m x3toolkit precheck "$OUT/before.bin" --lba "$
 check_identity
 export MTOOLS_SKIP_CHECK=1 LC_ALL="${LC_ALL:-en_US.UTF-8}"
 T=(-i "$TARGET")
+STATE="writing"
 echo "== WRITES START"
 REMOVE=()
 if ((RMMETA)); then
@@ -163,4 +194,5 @@ echo "== verify"
 "$PY" -m x3toolkit verify "$OUT/before.bin" "$OUT/after.bin" --lba "$LBA" \
   --manifest "$STAGE/stage-manifest.csv" ${REMOVE[@]+"${REMOVE[@]}"}
 if [[ -n "$DISK" ]]; then sync; diskutil eject "$DISK"; echo "EJECTED"; fi
+STATE="finished"
 echo "== DONE: PASS"

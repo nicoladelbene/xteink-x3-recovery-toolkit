@@ -38,7 +38,7 @@ CrossPoint source at the `v1.5.0` and `2.0.0` tags.
 | Setting | Class | Note |
 |---|---|---|
 | Chapter page count, book percentage, progress bar, title, battery | (b) | Also editable in the web UI |
-| Clock (`statusBarClock`) | (b) | The X3 has a real-time clock |
+| Clock (`statusBarClock`) | (b) | The firmware lists this option as "X3 only, requires DS3231 RTC" [SRC] |
 | UTC offset (`clockUtcOffsetQ`) | (a) | Quarter-hours, where 48 = UTC. 1.5.0 has no automatic daylight-saving time, so adjust it twice a year |
 
 ## Controls
@@ -59,7 +59,7 @@ CrossPoint source at the `v1.5.0` and `2.0.0` tags.
 ## Not available
 
 - **Reading statistics:** (d) in CrossPoint 1.5.0 and 2.0.0.
-- **Front light:** (d). The X3 has none.
+- **Front light:** (d). No front-light configuration exists for the X3 in the firmware's board table, so it appears to have none [INF].
 - **SD plugins:** arrive in 2.0.0, off by default.
 - **Bluetooth page turners:** 2.0.0 only. Upstream issue #4313 reports reconnection problems.
 

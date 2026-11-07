@@ -1,7 +1,10 @@
 # CrossPoint 1.5.0 → 2.0.0 on the XteInk X3
 
-These are notes from one upgrade done on 2026-11-07. The upgrade worked, and the following were
-all kept: reading positions, fonts, sleep screens, and 44 books. CrossPoint is a separate project;
+These are notes from one upgrade done on 2026-11-07. What the owner checked on the device
+afterwards: 2.0.0 boots; a book opened after the upgrade kept its reading position; NotoSerif
+renders; custom wallpapers appear on sleep and wake. The file-level state was verified on the
+card before the upgrade: 44 EPUB entries, 822 sleep BMPs and the reader's state folder. Not
+every book or wallpaper was opened individually on the device. CrossPoint is a separate project;
 this repository is not affiliated with it (see [NOTICE](../NOTICE.md)).
 
 **Labels:**
@@ -63,19 +66,21 @@ sequenceDiagram
     participant X3
     Mac->>Mac: firmware-check 2.0.0 and 1.5.0 images (chip, SHA-256, size)
     Mac->>Card: add-files.sh: 2-bpp sleep BMPs, NotoSerif .cpfont,<br/>2.0.0 image, 1.5.0 rollback image (add-only, verified)
-    Card->>X3: insert card, boot 1.5.0, confirm books and positions
+    Card->>X3: insert card, boot 1.5.0
     X3->>X3: Settings → System → SD Card Firmware Update → pick 2.0.0 image
     X3->>X3: validates image, writes the inactive OTA slot, reboots
-    X3-->>Mac: [DEV] 2.0.0 boots, positions, NotoSerif and sleep screens OK
+    X3-->>Mac: [DEV] 2.0.0 boots, a reading position kept, NotoSerif and sleep screens shown
 ```
 
 In 1.5.0, *SD Card Firmware Update* sits next to *Check for updates* [SRC]. Before writing, it
 validates the image: magic bytes, segments, checksum, SHA-256 and chip ID. It then writes the
 **inactive** OTA slot, so the previous firmware stays in the other slot until the next update.
 
-## Rollback (prepared, not needed)
+## Rollback (prepared, **not tested**)
 
-Do these in order of preference. None was carried out, because 2.0.0 worked.
+A rollback image is on the card, and the paths below come from the firmware source and
+upstream reports. **None of them has been carried out on this device**, because 2.0.0 worked.
+Treat them as a plan, not as a verified procedure. In order of preference:
 
 1. **Swap boot partition.** crosspointreader.com/debug connects over WebSerial from a desktop
    Chromium browser and can switch otadata back to the slot that still holds 1.5.0. Connecting

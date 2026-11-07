@@ -87,6 +87,12 @@ class Fat32Volume:
         self.cluster_size = self.bytes_per_sector * self.sectors_per_cluster
         self.data_offset = self.base + (self.reserved + self.num_fats * self.fat_sectors) * SECTOR
         self.num_clusters = (total - self.reserved - self.num_fats * self.fat_sectors) // self.sectors_per_cluster
+        self._geometry: list[str] = []
+        fat_capacity = self.fat_sectors * SECTOR // 4 - 2  # a FAT cannot describe more clusters than it has entries
+        if self.num_clusters > fat_capacity:
+            self._geometry.append(f"boot sector claims {self.num_clusters} clusters, FAT holds {fat_capacity}; "
+                                  "using the FAT size")
+            self.num_clusters = max(0, fat_capacity)
         if follow_fat not in range(1, self.num_fats + 1):
             raise ValueError(f"follow_fat must be 1..{self.num_fats}")
         self.fats = [self._load_fat(i) for i in range(self.num_fats)]
@@ -152,6 +158,9 @@ class Fat32Volume:
             if e[0] == 0x00:
                 break
             attr = e[11]
+            if e[0] == 0xE5 and attr == 0x0F:  # deleted long-name fragment
+                lfn = {}
+                continue
             if attr == 0x0F:
                 seq = e[0] & 0x1F
                 if e[0] & 0x40:
@@ -196,19 +205,24 @@ class Fat32Volume:
 
     def walk(self, hash_files: bool = True) -> list[Entry]:
         """Return every file and directory, depth first, in on-disk order."""
-        self.anomalies.clear()
+        self.anomalies[:] = list(self._geometry)
         self.deleted.clear()
         self._owner.clear()
         out: list[Entry] = []
+        seen_dirs = {self.root_cluster}  # a damaged entry can point a directory at an ancestor
 
         def rec(cluster: int, rel: str) -> None:
             for ent in self._dir_entries(cluster, rel):
                 if ent.is_dir:
                     out.append(ent)
-                    if ent.first_cluster:
-                        rec(ent.first_cluster, ent.path)
-                    else:
+                    if not ent.first_cluster:
                         self.anomalies.append(f"{ent.path}: directory with cluster 0")
+                    elif ent.first_cluster in seen_dirs:
+                        self.anomalies.append(
+                            f"{ent.path}: directory cluster {ent.first_cluster} already walked (cycle); not followed")
+                    else:
+                        seen_dirs.add(ent.first_cluster)
+                        rec(ent.first_cluster, ent.path)
                     continue
                 ent.clusters = self.chain(ent.first_cluster, ent.path) if ent.first_cluster else []
                 need = -(-ent.size // self.cluster_size)
@@ -217,7 +231,7 @@ class Fat32Volume:
                     self.anomalies.append(
                         f"{ent.path}: chain has {len(ent.clusters)} clusters, size needs {need}")
                 if hash_files:
-                    ent.sha256 = hashlib.sha256(self.read_file(ent)).hexdigest()
+                    ent.sha256 = self.hash_file(ent)
                 out.append(ent)
 
         rec(self.root_cluster, "")
@@ -225,6 +239,16 @@ class Fat32Volume:
 
     def read_file(self, ent: Entry) -> bytes:
         return self.read_clusters(ent.clusters, ent.size) if ent.clusters else b""
+
+    def hash_file(self, ent: Entry) -> str:
+        """SHA-256 of a file's content, read one cluster at a time (constant memory)."""
+        h, left = hashlib.sha256(), ent.size
+        for c in ent.clusters:
+            if left <= 0:
+                break
+            h.update(self._read(self.cluster_offset(c), self.cluster_size)[:left])
+            left -= self.cluster_size
+        return h.hexdigest()
 
     def sector_offsets(self, ent: Entry) -> list[int]:
         """Absolute image offset of every 512-byte sector of a file, in file order."""
@@ -246,9 +270,10 @@ def compare_fat_copies(vol: Fat32Volume) -> list[int]:
 def used_region_end(vol: Fat32Volume) -> int:
     """Byte offset (from the start of the image) just past the highest allocated cluster.
 
-    Everything a file system holds lives below this offset, so snapshotting
-    ``[0, used_region_end)`` captures the complete volume state.
+    Everything the file system references lives below this offset, so snapshotting
+    ``[0, used_region_end)`` captures the metadata and every allocated cluster. Both FAT
+    copies are consulted, so a cluster allocated in only one of them is still covered.
+    Free clusters above it are not captured; restoring the snapshot makes them free again.
     """
-    fat = vol.fats[0]
-    last = max((i for i in range(2, len(fat)) if fat[i]), default=1)
+    last = max((i for fat in vol.fats for i in range(2, len(fat)) if fat[i]), default=1)
     return vol.data_offset + max(0, last - 1) * vol.cluster_size

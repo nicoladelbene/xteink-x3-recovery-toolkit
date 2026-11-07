@@ -56,12 +56,18 @@ python -m x3toolkit bmp-validate ./sleep/*.bmp
 ```
 
 The `24bit` preset writes the format the device's factory wallpapers use: 24-bit gray,
-bottom-up, not pre-dithered. 1.5.0 dithers this format when it draws it. 2.0.0 converts it.
+bottom-up, not pre-dithered. 1.5.0 dithers this format when it draws it. 2.0.0 converts it
+once and caches the result.
+
+On the device in this project, **561** sleep screens are 2-bpp and **261** are 24-bit: the 11
+originals and 250 images added in an earlier session, left byte-identical on purpose. Upstream
+#4301 suggests the 24-bit ones may look lighter on 2.0.0. They have not been compared one by
+one.
 
 ## Many images in one folder
 
 - On every sleep, 1.5.0 lists `/.sleep` and reads each BMP's header. With 822 files that
-  should add roughly a second [INF]. In practice the delay was not noticeable.
+  should add roughly a second [INF]. The delay was not measured.
 - Short names such as `0001.bmp` keep the in-memory list small.
 - Subfolders of `/.sleep` are skipped in both versions [SRC]. That means `/.sleep/reserve/` is a
   safe place to park images you don't want in rotation.
@@ -81,5 +87,5 @@ if you share a card or a repository, the right to redistribute. Sources that wor
 Some wallpaper sites offer files for personal use only. Those can go on your own device, but you
 must not redistribute them. Keep a manifest for every image with its source URL, creator,
 licence and SHA-256. For the device in this project, 811 new images were installed from the
-sources in the [README chart](../README.md#results). This repository redistributes only the
+sources in the [README chart](../README.md#results-in-detail). This repository redistributes only the
 three CC0 examples listed in [NOTICE](../NOTICE.md).
