@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "x3toolkit"
+dynamic = ["version"]
+description = "Recover silently corrupted FAT32 microSD cards, verify card updates, and make sleep screens for the XteInk X3 e-reader"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "Nicola Del Bene" }]
+keywords = ["data-recovery", "fat32", "epub", "e-ink", "microsd", "esp32", "xteink"]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+  "Topic :: System :: Recovery Tools",
+  "Topic :: System :: Filesystems",
+]
+
+[project.optional-dependencies]
+images = ["Pillow>=9.1"]
+figures = ["matplotlib>=3.5", "Pillow>=9.1"]
+test = ["pytest>=7", "Pillow>=9.1"]
+
+[project.scripts]
+x3toolkit = "x3toolkit.cli:main"
+
+[project.urls]
+Source = "https://github.com/nicoladelbene/xteink-x3-recovery-toolkit"
+
+[tool.setuptools]
+packages = ["x3toolkit"]
+
+[tool.setuptools.dynamic]
+version = { attr = "x3toolkit.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.DS_Store
+._*
+# never commit data from a real card
+*.img
+*.bin
+*.map
+*.epub
+backup/
+snapshots/
+reads/
+stage/
+logs/
+!tests/**

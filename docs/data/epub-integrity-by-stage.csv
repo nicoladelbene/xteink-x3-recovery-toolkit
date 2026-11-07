@@ -1,0 +1,4 @@
+stage,verified_intact,restored_clean_copy,reconstructed_multiread,still_damaged,not_an_epub
+Read 1 (ddrescue image),26,0,0,17,1
+Bitwise majority of 7 reads,26,0,0,17,1
+Installed on the new card,26,6,5,6,1

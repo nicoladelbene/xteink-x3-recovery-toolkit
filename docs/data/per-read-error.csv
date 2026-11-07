@@ -1,0 +1,9 @@
+read,wrong_bytes_vs_clean_copies,sectors_differing_from_read_1
+Read 1,1226,0
+Read 2,5575,632
+Read 3,4900,596
+Read 4,5276,600
+Read 5,5982,550
+Read 6,5178,536
+Read 7,4230,546
+Majority of 7,3142,

@@ -1,0 +1,5 @@
+source,dest,size,sha256
+sleep/0001.bmp,/.sleep/0001.bmp,104614,<sha256 of sleep/0001.bmp>
+sleep/0002.bmp,/.sleep/0002.bmp,104614,<sha256 of sleep/0002.bmp>
+fonts/NotoSerif/NotoSerif_14.cpfont,/.fonts/NotoSerif/NotoSerif_14.cpfont,<bytes>,<sha256>
+firmware/crosspoint-1.5.0-x3-x4.bin,/firmware-rollback/crosspoint-1.5.0-x3-x4.bin,5544112,a7087155757bc63c1fcf60ae8d60a3760ce6d3406aaf7b9f23d0025244434f08
