@@ -66,7 +66,7 @@ sequenceDiagram
     Card->>X3: insert card, boot 1.5.0, confirm books and positions
     X3->>X3: Settings → System → SD Card Firmware Update → pick 2.0.0 image
     X3->>X3: validates image, writes the inactive OTA slot, reboots
-    X3-->>Mac: [DEV] 2.0.0 boots; positions, NotoSerif and sleep screens OK
+    X3-->>Mac: [DEV] 2.0.0 boots, positions, NotoSerif and sleep screens OK
 ```
 
 In 1.5.0, *SD Card Firmware Update* sits next to *Check for updates* [SRC]. Before writing, it

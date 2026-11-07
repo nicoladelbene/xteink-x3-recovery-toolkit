@@ -74,10 +74,10 @@ flowchart TD
     C -- no --> E[candidate]
     D & E --> F[for each damaged ZIP member]
     F --> G{stored or deflated?}
-    G -- deflated --> H[depth-first search over candidate sectors in file order;<br/>inflate incrementally and prune a branch<br/>as soon as the stream is invalid]
+    G -- deflated --> H[depth-first search over candidate sectors in file order,<br/>inflate incrementally and prune a branch<br/>as soon as the stream is invalid]
     G -- stored --> I[exhaustive search over candidate sectors,<br/>bounded by max-combos]
     H & I --> J{CRC-32 and size match?}
-    J -- yes --> K[pin those byte ranges; next member]
+    J -- yes --> K[pin those byte ranges, next member]
     J -- no --> L[report: budget exhausted / no read had the correct data]
 ```
 
