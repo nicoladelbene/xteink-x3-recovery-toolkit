@@ -17,8 +17,9 @@ This repository contains the tools built to deal with it, plus the evidence from
 - **X3-specific parts:** a sleep-screen BMP pipeline for the 4-level panel, offline ESP32
   firmware-image checks, and notes on the CrossPoint 1.5.0 → 2.0.0 upgrade.
 
-> Independent personal project. Not affiliated with or endorsed by CrossPoint Reader, CrossInk
-> or XteInk. No firmware, books, card images or personal data are included ([NOTICE](NOTICE.md)).
+> Independent personal project, not affiliated with, sponsored by or endorsed by any employer,
+> CrossPoint Reader, CrossInk or XteInk. No firmware, books, card images or personal data are
+> included ([NOTICE](NOTICE.md)).
 
 ## Results at a glance
 
